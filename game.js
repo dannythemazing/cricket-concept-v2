@@ -49,35 +49,31 @@ class Ball {
         this.position = { x: 0, y: 0 };
         this.container.appendChild(this.element);
         
-        // --- Event Listeners (Keep click-based) ---
-        // Visual press effect listeners
-        this.element.addEventListener('touchstart', (e) => {
-            e.preventDefault(); 
-            if (!this.game.isPaused) this.element.classList.add('pressed');
-        }, { passive: false });
-        this.element.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            if (!this.game.isPaused) this.element.classList.remove('pressed');
-        });
-        this.element.addEventListener('touchcancel', (e) => { 
-             if (!this.game.isPaused) this.element.classList.remove('pressed');
-        }); 
-        this.element.addEventListener('mousedown', () => {
-            if (!this.game.isPaused) this.element.classList.add('pressed');
-        });
-        this.element.addEventListener('mouseup', () => { 
-             if (!this.game.isPaused) this.element.classList.remove('pressed');
-        });
-        this.element.addEventListener('mouseleave', () => { 
-            if (!this.game.isPaused) this.element.classList.remove('pressed');
-        }); 
-        
-        // Core game logic listener
-        this.element.addEventListener('click', () => {
+        // --- Event Listeners (Optimized for Mobile) --- 
+        const startAction = (e) => {
+            e.preventDefault(); // Prevent default actions like scrolling/zooming on touch
             if (!this.game.isPaused) {
+                this.element.classList.add('pressed');
+                // Trigger core logic immediately on touch/mouse down
                 this.handleClick(); 
             }
-        });
+        };
+        const endAction = (e) => {
+            // Don't preventDefault here, might interfere with potential future click events if needed
+            if (!this.game.isPaused) {
+                this.element.classList.remove('pressed');
+            }
+        };
+
+        // Mobile Listeners
+        this.element.addEventListener('touchstart', startAction, { passive: false });
+        this.element.addEventListener('touchend', endAction);
+        this.element.addEventListener('touchcancel', endAction); 
+
+        // Desktop Listeners (Keep mousedown for responsiveness, remove click handler logic)
+        this.element.addEventListener('mousedown', startAction);
+        this.element.addEventListener('mouseup', endAction);
+        this.element.addEventListener('mouseleave', endAction); 
         
         this.game.playPopSound();
         this.spawn();
