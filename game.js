@@ -49,32 +49,6 @@ class Ball {
         this.position = { x: 0, y: 0 };
         this.container.appendChild(this.element);
         
-        // --- Event Listeners (Optimized for Mobile) --- 
-        const startAction = (e) => {
-            e.preventDefault(); // Prevent default actions like scrolling/zooming on touch
-            if (!this.game.isPaused) {
-                this.element.classList.add('pressed');
-                // Trigger core logic immediately on touch/mouse down
-                this.handleClick(); 
-            }
-        };
-        const endAction = (e) => {
-            // Don't preventDefault here, might interfere with potential future click events if needed
-            if (!this.game.isPaused) {
-                this.element.classList.remove('pressed');
-            }
-        };
-
-        // Mobile Listeners
-        this.element.addEventListener('touchstart', startAction, { passive: false });
-        this.element.addEventListener('touchend', endAction);
-        this.element.addEventListener('touchcancel', endAction); 
-
-        // Desktop Listeners (Keep mousedown for responsiveness, remove click handler logic)
-        this.element.addEventListener('mousedown', startAction);
-        this.element.addEventListener('mouseup', endAction);
-        this.element.addEventListener('mouseleave', endAction); 
-        
         this.game.playPopSound();
         this.spawn();
     }
@@ -323,7 +297,11 @@ class Ball {
     }
 
     handleClick() { // Handles the click action
-        if (this.game.isPaused) return;
+        console.log("Logic: handleClick called");
+        if (this.game.isPaused) {
+             console.log("Logic: handleClick aborted - game paused");
+             return;
+        }
 
         // Apply acceleration boost FIRST
         this.currentSpeed += this.accelerationPerClick;
@@ -431,10 +409,13 @@ class Game {
         
         // Add touch event prevention
         this.gameContainer.addEventListener('touchmove', (e) => {
-            e.preventDefault(); // Prevent scrolling while playing
+            e.preventDefault(); 
         }, { passive: false });
         
-        this.gameLoopId = null; // ID for the animation frame loop
+        // --- Add Event Delegation Listeners ---
+        this.setupTapListeners();
+        
+        this.gameLoopId = null; 
         this.lastTimestamp = 0;
     }
 
@@ -820,6 +801,69 @@ class Game {
         popSound.play().catch(e => console.log(`Error playing pop sound (${soundPath}):`, e));
     }
     // --- END ADDED METHODS --- 
+
+    setupTapListeners() {
+        const handleTapStart = (e) => {
+            if (!this.gameStarted || this.isPaused || this.balls.length === 0) return;
+            
+            const currentBall = this.balls[0]; // Get the active ball
+            
+            // --- Coordinate-based Check --- 
+            let touchX, touchY;
+            if (e.type === 'touchstart') {
+                if (e.touches.length === 0) return; // No touch points
+                touchX = e.touches[0].clientX;
+                touchY = e.touches[0].clientY;
+            } else if (e.type === 'mousedown') {
+                touchX = e.clientX;
+                touchY = e.clientY;
+            } else {
+                return; // Not a relevant start event
+            }
+
+            const ballRect = currentBall.element.getBoundingClientRect();
+
+            // Check if touch coordinates are within the ball's bounds
+            const tappedOnBall = (
+                touchX >= ballRect.left &&
+                touchX <= ballRect.right &&
+                touchY >= ballRect.top &&
+                touchY <= ballRect.bottom
+            );
+            // --- End Coordinate-based Check ---
+            
+            if (tappedOnBall) {
+                e.preventDefault(); // Prevent potential double interactions or scrolling
+                console.log("Delegated Event: Tap Start on Ball (Coords)");
+                currentBall.element.classList.add('pressed');
+                currentBall.handleClick(); // Call the ball's logic handler
+            } else {
+                 console.log("Delegated Event: Tap Start outside Ball (Coords)");
+            }
+        };
+
+        const handleTapEnd = (e) => {
+            if (!this.gameStarted || this.balls.length === 0) return;
+            const currentBall = this.balls[0];
+            
+            // Check if the END target is related to the ball (optional, but good practice)
+            // We mostly just need to remove the pressed state if it exists
+            if (currentBall.element.classList.contains('pressed')) {
+                 console.log("Delegated Event: Tap End on Ball (removing pressed)");
+                 currentBall.element.classList.remove('pressed');
+            }
+        };
+
+        // Use mousedown/up for desktop to mirror touch
+        this.gameContainer.addEventListener('mousedown', handleTapStart);
+        this.gameContainer.addEventListener('mouseup', handleTapEnd);
+        this.gameContainer.addEventListener('mouseleave', handleTapEnd); // Handle mouse leaving container
+
+        // Use touchstart/end for mobile
+        this.gameContainer.addEventListener('touchstart', handleTapStart, { passive: false });
+        this.gameContainer.addEventListener('touchend', handleTapEnd);
+        this.gameContainer.addEventListener('touchcancel', handleTapEnd); 
+    }
 }
 
 // Start the game when the DOM is ready
