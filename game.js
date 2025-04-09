@@ -2,46 +2,80 @@ class Ball {
     constructor(game, container) {
         this.game = game;
         this.container = container;
+        
+        // Main container element
         this.element = document.createElement('div');
         this.element.className = 'target';
+
+        // Frequency Progress Bar Elements
+        this.frequencyContainer = document.createElement('div');
+        this.frequencyContainer.className = 'frequency-progress-container';
+        this.frequencyFillElement = document.createElement('div');
+        this.frequencyFillElement.className = 'frequency-progress-fill';
+        this.targetRangeElement = document.createElement('div'); // New element
+        this.targetRangeElement.className = 'frequency-target-range'; // New class
         
-        // Adjust size based on screen size
+        // Append elements in correct order (target range behind fill)
+        this.frequencyContainer.appendChild(this.targetRangeElement); 
+        this.frequencyContainer.appendChild(this.frequencyFillElement); 
+
+        // Ball Visual Element
+        this.ballVisualElement = document.createElement('div');
+        this.ballVisualElement.className = 'ball-visual';
+
+        // Append elements to main target element
+        this.element.appendChild(this.frequencyContainer);
+        this.element.appendChild(this.ballVisualElement);
+        
+        // Adjust size based on screen size (Reduced)
         const isMobile = window.innerWidth <= 768;
         this.currentSize = isMobile ? 
-            Math.random() * 30 + 50 : // Mobile: 50-80px (was 80-120px)
-            Math.random() * 80 + 170;  // Desktop: 170-250px
+            Math.random() * 35 + 60 : // Mobile: 60-95px (was 75-120px)
+            Math.random() * 100 + 200;  // Desktop: 200-300px (was 255-375px)
             
-        this.lifespan = Math.random() * 3500 + 3000; // 3-6.5 seconds
+        // --- Speedometer Gameplay Variables (Refined) ---
+        this.requiredTaps = 0;          // Counts successful clicks in sweet spot (Set in spawn)
+        this.taps = 0;                  
+        this.currentSpeed = 0;          // Current speed (0-100)
+        this.maxSpeed = 100;            // Max speed for bar scaling
+        this.targetSpeedMin = 60;       // Sweet spot min speed
+        this.targetSpeedMax = 80;       // Sweet spot max speed
+        this.accelerationPerClick = 15; // Speed boost per click (Increased from 10)
+        this.decelerationRate = 50;     // Speed decay per second (100/2s)
+        this.isInSweetSpot = false;     // Tracks if currentSpeed is 60-80
+        this.lastUpdateTime = 0;
+        this.currentScale = 1;          // Ball growth
+
         this.position = { x: 0, y: 0 };
-        this.shrinkInterval = null;
         this.container.appendChild(this.element);
         
-        // Use touchstart and touchend for mobile
+        // --- Event Listeners (Keep click-based) ---
+        // Visual press effect listeners
         this.element.addEventListener('touchstart', (e) => {
-            e.preventDefault(); // Prevent double-firing of events
-            if (!this.game.isPaused) {
-                this.element.classList.add('pressed');
-            }
-        });
-        
+            e.preventDefault(); 
+            if (!this.game.isPaused) this.element.classList.add('pressed');
+        }, { passive: false });
         this.element.addEventListener('touchend', (e) => {
             e.preventDefault();
-            if (!this.game.isPaused) {
-                this.element.classList.remove('pressed');
-                this.handleClick();
-            }
+            if (!this.game.isPaused) this.element.classList.remove('pressed');
         });
-        
-        // Keep mouse events for desktop
+        this.element.addEventListener('touchcancel', (e) => { 
+             if (!this.game.isPaused) this.element.classList.remove('pressed');
+        }); 
         this.element.addEventListener('mousedown', () => {
-            if (!this.game.isPaused) {
-                this.element.classList.add('pressed');
-            }
+            if (!this.game.isPaused) this.element.classList.add('pressed');
         });
+        this.element.addEventListener('mouseup', () => { 
+             if (!this.game.isPaused) this.element.classList.remove('pressed');
+        });
+        this.element.addEventListener('mouseleave', () => { 
+            if (!this.game.isPaused) this.element.classList.remove('pressed');
+        }); 
         
+        // Core game logic listener
         this.element.addEventListener('click', () => {
             if (!this.game.isPaused) {
-                this.handleClick();
+                this.handleClick(); 
             }
         });
         
@@ -50,14 +84,8 @@ class Ball {
     }
 
     spawn() {
-        // Find a valid position
-        let attempts = 0;
-        const maxAttempts = 20;
-        
-        do {
-            this.generateRandomPosition();
-            attempts++;
-        } while (this.isOverlapping() && attempts < maxAttempts);
+        // Find a valid position (Overlap check removed for single ball)
+        this.generateRandomPosition();
 
         // Set position and size
         this.element.style.width = `${this.currentSize}px`;
@@ -65,20 +93,47 @@ class Ball {
         this.element.style.left = `${this.position.x}px`;
         this.element.style.top = `${this.position.y}px`;
         
-        // Start shrinking animation
-        this.startShrinking();
+        // Reset variables
+        this.taps = 0;
+        this.currentSpeed = 0; 
+        this.requiredTaps = Math.floor(Math.random() * 10 + 8); 
+        this.currentScale = 1;
+        this.isInSweetSpot = false;
         
-        // Set timeout to add warning shake - start warning 1.5s before disappearing
-        setTimeout(() => {
-            if (this.element.parentNode) {
-                this.element.classList.add('warning');
-            }
-        }, this.lifespan - 1500); // Increased warning time from 1.2s to 1.5s
+        // --- Randomize Sweet Spot Position (Fixed Width) --- 
+        const sweetSpotWidth = 25; // Fixed width
+        const maxPossibleStart = this.maxSpeed - sweetSpotWidth; // Max start is 75 (100 - 25)
+        // Allow start position from 0 up to the maximum possible start position
+        this.targetSpeedMin = Math.random() * maxPossibleStart; // Random start 0 - 75
+        this.targetSpeedMax = this.targetSpeedMin + sweetSpotWidth;
+        // --- End Randomize Sweet Spot --- 
+
+        // Reset visuals
+        this.updateProgressBar(0);
+        this.frequencyFillElement.classList.remove('sweet-spot');
+        this.ballVisualElement.classList.remove('correct-frequency');
+        this.ballVisualElement.style.transform = 'scale(1)';
+        this.updateTargetRangeIndicator(); // Update red target indicator position
         
-        // Set timeout to remove the ball if not clicked
-        this.removalTimeout = setTimeout(() => {
-            this.miss(true); // Timeout miss
-        }, this.lifespan);
+        this.lastUpdateTime = performance.now(); 
+    }
+    
+    updateTargetRangeIndicator() { // Uses fixed 60-80 range
+        const startPercent = (this.targetSpeedMin / this.maxSpeed) * 100;
+        const endPercent = (this.targetSpeedMax / this.maxSpeed) * 100;
+        const widthPercent = endPercent - startPercent;
+        
+        if (this.targetRangeElement) {
+            this.targetRangeElement.style.left = `${startPercent}%`;
+            this.targetRangeElement.style.width = `${widthPercent}%`;
+        } else {
+            console.error("Target range element not found");
+        }
+    }
+    
+    updateProgressBar(speed) {
+        const fillPercent = Math.min(100, Math.max(0, (speed / this.maxSpeed) * 100));
+        this.frequencyFillElement.style.width = `${fillPercent}%`;
     }
 
     generateRandomPosition() {
@@ -95,56 +150,6 @@ class Ball {
             x: Math.random() * maxX,
             y: Math.random() * (maxY - topSafeZone) + topSafeZone // Add topSafeZone to minimum Y
         };
-    }
-
-    isOverlapping() {
-        const margin = 20; // Minimum space between balls
-        const topSafeZone = 100; // Same safe zone as in generateRandomPosition
-        
-        // Get this ball's bounds
-        const thisRect = {
-            left: this.position.x - margin,
-            right: this.position.x + this.currentSize + margin,
-            top: this.position.y - margin,
-            bottom: this.position.y + this.currentSize + margin
-        };
-        
-        // Check if too close to top UI
-        if (thisRect.top < topSafeZone) {
-            return true;
-        }
-        
-        // Check overlap with other balls
-        for (const ball of this.game.balls) {
-            if (ball === this) continue;
-            
-            const ballRect = {
-                left: ball.position.x - margin,
-                right: ball.position.x + ball.currentSize + margin,
-                top: ball.position.y - margin,
-                bottom: ball.position.y + ball.currentSize + margin
-            };
-            
-            if (!(thisRect.right < ballRect.left || 
-                  thisRect.left > ballRect.right || 
-                  thisRect.bottom < ballRect.top || 
-                  thisRect.top > ballRect.bottom)) {
-                return true;
-            }
-        }
-        
-        return false;
-    }
-
-    createHitAnimation() {
-        const hitElement = document.createElement('div');
-        hitElement.className = 'hit-animation';
-        hitElement.style.width = `${this.currentSize}px`;
-        hitElement.style.height = `${this.currentSize}px`;
-        hitElement.style.left = `${this.position.x}px`;
-        hitElement.style.top = `${this.position.y}px`;
-        hitElement.style.setProperty('--random', Math.random());
-        return hitElement;
     }
 
     showFloatingScore(scoreResult) {
@@ -199,110 +204,173 @@ class Ball {
         }, 1000);
     }
 
-    handleClick() {
-        // Clear the removal timeout
-        clearTimeout(this.removalTimeout);
+    showFloatingPoints(points) {
+        // Create the text element
+        const pointsElement = document.createElement('div');
+        pointsElement.className = 'floating-text'; 
         
-        // Stop shrinking animation
-        this.stopShrinking();
-        
-        // Check for paused state
-        if (this.game.isPaused) return;
-        
-        // Remove pressed class if it was added
-        this.element.classList.remove('pressed');
-        
-        // Hit
-        this.element.className = 'target hit';
-        
-        // Create and add hit animation
-        const hitElement = this.createHitAnimation();
-        this.container.appendChild(hitElement);
-        
-        const scoreResult = this.game.addScore();
-        this.showFloatingScore(scoreResult);
-        this.game.playHitSound();
-        
-        // Remove the ball after a short delay to allow for press animation
-        setTimeout(() => {
-            this.remove();
-            this.game.spawnNewBall();
-        }, 50);
-        
-        // Remove the hit animation after it completes
-        setTimeout(() => {
-            if (hitElement.parentNode) {
-                hitElement.parentNode.removeChild(hitElement);
-            }
-        }, 1500);
-    }
-
-    stopShrinking() {
-        if (this.shrinkInterval) {
-            clearInterval(this.shrinkInterval);
-            this.shrinkInterval = null;
+        let textContent = `+${points}`;
+        const currentStreak = this.game.streak; 
+        let fireEmojis = '';
+        if (currentStreak >= 12) {       
+            fireEmojis = ' 🔥🔥🔥🔥';
+        } else if (currentStreak >= 8) { 
+            fireEmojis = ' 🔥🔥🔥';
+        } else if (currentStreak >= 4) { 
+            fireEmojis = ' 🔥🔥';
+        } else if (currentStreak >= 2) { 
+            fireEmojis = ' 🔥';
         }
+        textContent += fireEmojis;
+        pointsElement.textContent = textContent;
+        
+        // Position the text above the ball and progress bar
+        const verticalOffset = 30; // Pixels to move text above the ball's top edge
+        pointsElement.style.left = `${this.position.x + this.currentSize / 2}px`; // Center horizontally
+        pointsElement.style.top = `${this.position.y - verticalOffset}px`; // Position above
+        
+        // Append to the game container
+        this.container.appendChild(pointsElement);
+        
+        // Remove the text element after animation
+        setTimeout(() => {
+            if (pointsElement.parentNode) {
+                pointsElement.parentNode.removeChild(pointsElement);
+            }
+        }, 800); 
     }
 
-    startShrinking() {
-        // Initial size is this.currentSize
-        let currentSize = this.currentSize;
-        const minSize = this.currentSize * 0.7; // Shrink to 70% of original size (was 60%)
-        const shrinkRate = (this.currentSize - minSize) / this.lifespan;
-        const startTime = Date.now();
-        
-        this.shrinkInterval = setInterval(() => {
-            const elapsed = Date.now() - startTime;
-            
-            if (elapsed >= this.lifespan) {
-                clearInterval(this.shrinkInterval);
-                return;
-            }
-            
-            // Calculate new size with eased shrinking
-            const progress = elapsed / this.lifespan;
-            const easedProgress = progress < 0.7 ? progress * 0.7 : progress; // Shrink slower in the first 70% of time
-            currentSize = this.currentSize - (this.currentSize - minSize) * easedProgress;
-            
-            // Don't shrink beyond minimum size
-            if (currentSize < minSize) {
-                currentSize = minSize;
-            }
-            
-            // Update element size
-            this.element.style.width = `${currentSize}px`;
-            this.element.style.height = `${currentSize}px`;
-        }, 50); // Update every 50ms
-    }
+    // --- Core Update Loop (Handles DECAY and VISUAL STATE only) ---
+    update(timestamp) {
+        if (this.game.isPaused) {
+            this.lastUpdateTime = timestamp; 
+            return; 
+        }
+        const deltaTime = (timestamp - this.lastUpdateTime) / 1000; 
+        this.lastUpdateTime = timestamp;
 
-    miss(isTimeout = true) {
-        clearTimeout(this.removalTimeout);
-        
-        this.element.className = 'target miss';
-        this.showMissText(this.position.x, this.position.y);
-        
-        // Reset streak for both timeout and active misses
-        this.game.handleMiss();
-        
-        // Only play miss sound if it's not a timeout
-        if (!isTimeout) {
-            this.game.playMissSound();
+        // 1. Apply Deceleration
+        if (this.currentSpeed > 0) {
+            this.currentSpeed -= this.decelerationRate * deltaTime;
+            this.currentSpeed = Math.max(0, this.currentSpeed); 
+            this.updateProgressBar(this.currentSpeed); 
         }
         
-        // Remove the ball after miss animation completes
+        // 2. Check if current speed is still in sweet spot (for visual state)
+        const stillInSweetSpot = this.currentSpeed >= this.targetSpeedMin && this.currentSpeed <= this.targetSpeedMax;
+        
+        // 3. Update Visual Indicators if state changed due to decay
+        if (this.isInSweetSpot !== stillInSweetSpot) {
+            this.isInSweetSpot = stillInSweetSpot; // Update state
+            this.frequencyFillElement.classList.toggle('sweet-spot', this.isInSweetSpot);
+            this.ballVisualElement.classList.toggle('correct-frequency', this.isInSweetSpot);
+            
+            // If speed decayed OUT of the sweet spot, reset streak
+            if (!this.isInSweetSpot) {
+                 this.game.handleFrequencyMiss();
+            }
+        }
+        // Scoring, growth, and completion are handled in handleClick
+    }
+
+    createConfettiBurst() {
+        const numParticles = 20; // Number of confetti particles
+        const colors = ['#f39c12', '#e74c3c', '#3498db', '#2ecc71', '#9b59b6', '#f1c40f']; // Example colors
+        const burstRadius = this.currentSize * 0.8; // How far particles fly (related to ball size)
+        
+        // Create a container at the ball's center
+        const confettiContainer = document.createElement('div');
+        confettiContainer.className = 'confetti-container';
+        // Position at the center of the ball's element
+        confettiContainer.style.left = `${this.position.x + this.currentSize / 2}px`;
+        confettiContainer.style.top = `${this.position.y + this.currentSize / 2}px`;
+        this.container.appendChild(confettiContainer);
+
+        for (let i = 0; i < numParticles; i++) {
+            const particle = document.createElement('div');
+            particle.className = 'confetti-particle';
+            
+            // Random color
+            particle.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+            
+            // Random direction and distance
+            const angle = Math.random() * Math.PI * 2;
+            const distance = Math.random() * burstRadius;
+            const translateX = Math.cos(angle) * distance;
+            const translateY = Math.sin(angle) * distance;
+            
+            // Set animation properties
+            particle.style.setProperty('--tx', `${translateX}px`);
+            particle.style.setProperty('--ty', `${translateY}px`);
+            const duration = Math.random() * 0.5 + 0.5; // 0.5 - 1.0 seconds
+            particle.style.animation = `confetti-burst ${duration}s ease-out forwards`;
+            
+            confettiContainer.appendChild(particle);
+        }
+        
+        // Remove the container after the longest animation finishes
         setTimeout(() => {
-            this.remove();
-            this.game.spawnNewBall();
-        }, 500);
+            if (confettiContainer.parentNode) {
+                confettiContainer.parentNode.removeChild(confettiContainer);
+            }
+        }, 1000); // Corresponds to max duration
     }
 
     remove() {
-        clearTimeout(this.removalTimeout);
+        // Create confetti before removing the element
+        this.createConfettiBurst();
         
         if (this.element.parentNode) {
             this.container.removeChild(this.element);
         }
         this.game.removeBall(this);
+    }
+
+    handleClick() { // Handles the click action
+        if (this.game.isPaused) return;
+
+        // Apply acceleration boost FIRST
+        this.currentSpeed += this.accelerationPerClick;
+        this.currentSpeed = Math.min(this.maxSpeed, this.currentSpeed); // Clamp speed
+        this.updateProgressBar(this.currentSpeed); // Update visual bar immediately
+
+        // Check if the speed AFTER the click is in the sweet spot
+        const nowInSweetSpot = this.currentSpeed >= this.targetSpeedMin && this.currentSpeed <= this.targetSpeedMax;
+        
+        if (nowInSweetSpot) {
+            // SUCCESSFUL Click
+            this.taps++; // Increment successful taps
+            const basePoints = 1;
+            const pointsEarned = this.game.addScore(basePoints); // This increments streak internally
+            
+            // Call showFloatingPoints without streak name
+            this.showFloatingPoints(pointsEarned); 
+            
+            this.game.playHitSound(); // Sound for correct tap
+            
+            // Grow ball on correct tap
+            this.currentScale += 0.03; 
+            this.ballVisualElement.style.transform = `scale(${this.currentScale})`;
+            
+            // Update internal state
+            this.isInSweetSpot = true;
+
+        } else {
+            // MISSED Click (too low or too high AFTER boost)
+            this.game.handleFrequencyMiss(); // Reset streak
+            this.isInSweetSpot = false; // Explicitly set state
+            // Optional: Play miss sound or different feedback?
+            // this.game.playMissSound();
+        }
+        
+        // Always update visual indicators based on the NEW sweet spot state
+        this.frequencyFillElement.classList.toggle('sweet-spot', this.isInSweetSpot);
+        this.ballVisualElement.classList.toggle('correct-frequency', this.isInSweetSpot);
+
+        // Check if required taps reached
+        if (this.taps >= this.requiredTaps) {
+            this.remove(); 
+        }
     }
 }
 
@@ -310,11 +378,8 @@ class Game {
     constructor() {
         this.score = 0;
         this.streak = 0;
-        this.currentStreakLevel = 'Normal';
         this.scoreElement = document.getElementById('score');
-        this.streakElement = document.getElementById('streak');
         this.pauseScoreElement = document.getElementById('pauseScore');
-        this.pauseStreakElement = document.getElementById('pauseStreak');
         this.pauseOverlay = document.getElementById('pauseOverlay');
         this.resumeButton = document.getElementById('resumeButton');
         this.gameContainer = document.querySelector('.game-container');
@@ -330,13 +395,22 @@ class Game {
         this.pauseArcticButton = document.getElementById('pauseArcticButton');
         
         this.balls = [];
-        // Adjust maxBalls based on screen size
-        const isMobile = window.innerWidth <= 768;
-        this.maxBalls = isMobile ? 3 : 4; // Fewer balls on mobile
+        this.maxBalls = 1; // Only one ball at a time
         this.gameStarted = false;
         this.isPaused = false;
         this.isMuted = false;
         this.environment = 'jungle'; // Default environment
+        this.soundEnabled = true;
+        this.currentEnvironment = 'jungle';
+        
+        // Streak Levels & Multipliers
+        this.streakLevels = [
+            { threshold: 12, name: 'Max!', multiplier: 16 },
+            { threshold: 8, name: 'x8!', multiplier: 8 },
+            { threshold: 4, name: 'x4!', multiplier: 4 },
+            { threshold: 2, name: 'x2', multiplier: 2 },
+            { threshold: 0, name: 'x1', multiplier: 1 }
+        ];
         
         // Initialize sounds
         this.initSounds();
@@ -364,8 +438,8 @@ class Game {
             e.preventDefault(); // Prevent scrolling while playing
         }, { passive: false });
         
-        // Create streak progress bar
-        this.createStreakProgress();
+        this.gameLoopId = null; // ID for the animation frame loop
+        this.lastTimestamp = 0;
     }
 
     initSounds() {
@@ -558,177 +632,88 @@ class Game {
         // Hide start screen
         document.getElementById('startScreen').classList.add('hidden');
         this.gameStarted = true;
+        this.score = 0; // Reset score/streak
+        this.streak = 0;
+        this.updateScore();
         
         // Ensure video is playing
         this.videoBackground.play().catch(console.error);
         
-        // Add click/touch listener for misses
-        this.gameContainer.addEventListener('click', (e) => {
-            if (e.target === this.gameContainer && this.gameStarted && !this.isPaused) {
-                this.handleGlobalMiss(e);
-            }
-        });
-        
-        // Add touch listener for misses
-        this.gameContainer.addEventListener('touchend', (e) => {
-            if (e.target === this.gameContainer && this.gameStarted && !this.isPaused) {
-                const touch = e.changedTouches[0];
-                this.handleGlobalMiss(touch);
-            }
-        });
-        
         // Start background music only if sound is enabled
         if (this.soundEnabled) {
             this.bgMusic.play()
-                .then(() => {
-                    console.log('Background music started successfully');
-                })
-                .catch(error => {
-                    console.log('Background music failed to play:', error);
-                });
+                .then(() => { console.log('BG music started'); })
+                .catch(error => { console.log('BG music failed:', error); });
         }
         
-        // Spawn initial balls
-        for (let i = 0; i < this.maxBalls; i++) {
-            this.spawnNewBall();
-        }
-    }
-
-    handleGlobalMiss(event) {
-        // Only show miss text if we clicked in the game container
-        if (event.target.classList.contains('game-container')) {
-            this.showMissText(event.clientX, event.clientY);
-            this.handleMiss();
-        }
-    }
-
-    setupControlButtons() {
-        // Pause button setup
-        this.pauseButton.addEventListener('click', () => {
-            this.togglePause();
-        });
-
-        // Sound button setup
-        this.soundButton.addEventListener('click', () => {
-            this.toggleSound();
-        });
+        // Spawn initial ball
+        this.spawnNewBall();
         
-        // Resume button setup
-        this.resumeButton.addEventListener('click', () => {
-            this.togglePause(); // Resume the game
-        });
+        // Start the game loop
+        this.lastTimestamp = performance.now();
+        this.gameLoopId = requestAnimationFrame(this.gameLoop.bind(this));
+    }
+
+    gameLoop(timestamp) {
+        if (!this.gameStarted || this.isPaused) {
+            this.lastTimestamp = timestamp; // Prevent large deltaTime after pause
+            this.gameLoopId = requestAnimationFrame(this.gameLoop.bind(this));
+            return;
+        }
+
+        // Update the current ball (if one exists)
+        if (this.balls.length > 0) {
+            this.balls[0].update(timestamp);
+        }
+
+        // Continue the loop
+        this.gameLoopId = requestAnimationFrame(this.gameLoop.bind(this));
+    }
+
+    stopGameLoop() {
+        if (this.gameLoopId) {
+            cancelAnimationFrame(this.gameLoopId);
+            this.gameLoopId = null;
+        }
     }
 
     togglePause() {
         if (!this.gameStarted) return;
-        
         this.isPaused = !this.isPaused;
-        
         if (this.isPaused) {
-            // Pause the game
-            this.pauseGame();
+            this.stopGameLoop(); // Stop loop updates
             // Change pause button to play icon
             this.pauseButton.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
                     <path d="M8 5v14l11-7z"/>
                 </svg>
             `;
             this.pauseButton.classList.add('active');
-            
             // Show pause overlay
             this.pauseOverlay.classList.add('visible');
-            
             // Update pause overlay score
             this.pauseScoreElement.textContent = this.score;
-            this.pauseStreakElement.textContent = this.streak;
-            
             // Update environment button states
             this.updateEnvironmentButtonStates();
         } else {
-            // Resume the game
-            this.resumeGame();
             // Change play button back to pause icon
             this.pauseButton.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                    <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
+                    <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
                 </svg>
             `;
             this.pauseButton.classList.remove('active');
-            
             // Hide pause overlay
             this.pauseOverlay.classList.remove('visible');
+            // Restart the game loop
+            this.lastTimestamp = performance.now();
+            this.gameLoopId = requestAnimationFrame(this.gameLoop.bind(this));
+            this.resumeGame(); // Resume sounds etc.
         }
-    }
-
-    pauseGame() {
-        // Stop all ball removal timeouts
-        for (const ball of this.balls) {
-            clearTimeout(ball.removalTimeout);
-        }
-        
-        // Pause all sounds
-        this.pauseAllSounds();
-        
-        // Pause the background video
-        this.videoBackground.pause();
-    }
-
-    resumeGame() {
-        // Resume background music if not muted
-        if (!this.isMuted) {
-            this.bgMusic.play().catch(console.error);
-        }
-        
-        // Resume the background video
-        this.videoBackground.play().catch(console.error);
-        
-        // Restart all balls with new timeouts
-        for (const ball of this.balls) {
-            // Remove any existing warning class
-            ball.element.classList.remove('warning');
-            
-            // Set a new timeout for each ball
-            clearTimeout(ball.removalTimeout);
-            
-            // Standard 2s timeout when resuming (increased from 1.5s)
-            const remainingTime = 2000;
-            
-            // Add warning shake 1.2s before disappearing
-            setTimeout(() => {
-                if (ball.element.parentNode) {
-                    ball.element.classList.add('warning');
-                }
-            }, remainingTime - 1200);
-            
-            // Set the removal timeout
-            ball.removalTimeout = setTimeout(() => {
-                ball.miss(true); // Timeout miss
-            }, remainingTime);
-        }
-    }
-
-    playHitSound() {
-        if (!this.soundEnabled) return;
-        const hitSound = new Audio(this.currentEnvironment === 'jungle' ? 'assets/hit.m4a' : 'assets/arctic_hit.m4a');
-        hitSound.volume = 0.3;
-        hitSound.play().catch(e => console.log('Error playing hit sound:', e));
-    }
-
-    playMissSound() {
-        if (!this.soundEnabled) return;
-        const missSound = new Audio(this.currentEnvironment === 'jungle' ? 'assets/miss.m4a' : 'assets/arctic_miss.m4a');
-        missSound.volume = 0.3;
-        missSound.play().catch(e => console.log('Error playing miss sound:', e));
-    }
-
-    playPopSound() {
-        if (!this.soundEnabled) return;
-        const popSound = new Audio(this.currentEnvironment === 'jungle' ? 'assets/pop.m4a' : 'assets/arctic_pop.m4a');
-        popSound.volume = 0.5;
-        popSound.play().catch(e => console.log('Error playing pop sound:', e));
     }
 
     spawnNewBall() {
+        // Only spawn if no ball exists
         if (this.balls.length < this.maxBalls && this.gameStarted && !this.isPaused) {
             const ball = new Ball(this, this.gameContainer);
             this.balls.push(ball);
@@ -740,149 +725,108 @@ class Game {
         if (index > -1) {
             this.balls.splice(index, 1);
         }
+        // Don't immediately spawn, let the loop handle spawning if needed? Or spawn directly?
+        // For simplicity, let's spawn directly for now.
+        this.spawnNewBall(); 
     }
 
-    addScore() {
-        // Calculate points and bonus based on streak
-        let points = 10; // Default points (streak 1-4)
-        
-        // Store old streak level for comparison
-        const oldStreakLevel = this.getStreakLevel(this.streak);
-        
-        // Determine points based on streak tier
-        if (this.streak >= 19) {
-            points = 30;
-        } else if (this.streak >= 9) {
-            points = 20;
-        } else if (this.streak >= 4) {
-            points = 15;
+    getCurrentStreakLevel() {
+        for (const level of this.streakLevels) {
+            if (this.streak >= level.threshold) {
+                return level;
+            }
         }
-        
-        this.score += points;
+        return this.streakLevels[this.streakLevels.length - 1]; // Should be x1
+    }
+
+    addScore(pointsToAddFloat) {
+        const oldLevel = this.getCurrentStreakLevel();
         this.streak++;
-        this.updateScore();
-        this.updateStreakProgress();
+        const streakIncremented = true; 
         
-        // Check if we're entering a new streak level
-        const newStreakLevel = this.getStreakLevel(this.streak);
-        if (newStreakLevel !== oldStreakLevel) {
-            this.showStreakLabel(newStreakLevel);
+        const currentLevel = this.getCurrentStreakLevel();
+        const pointsToAdd = Math.ceil(pointsToAddFloat * currentLevel.multiplier); 
+        
+        this.score += pointsToAdd;
+        this.updateScore();
+
+        // Announce level change if needed
+        if (currentLevel.threshold > 0 && currentLevel !== oldLevel) {
+            // this.announceStreakChange(`Streak Up! ${currentLevel.name}`); // REMOVED ANNOUNCEMENT
         }
         
-        return {
-            points: points,
-            bonusText: newStreakLevel !== 'Normal' ? newStreakLevel : null
-        };
+        return pointsToAdd; 
     }
 
-    getStreakLevel(streak) {
-        if (streak >= 20) return 'Firestorm! 🔥🔥';
-        if (streak >= 10) return 'Hot Streak! 🔥';
-        if (streak >= 5) return 'Combo!';
-        return 'Normal';
-    }
-
-    showStreakLabel(text) {
-        this.streakLabel.textContent = text;
-        this.streakLabel.classList.add('visible');
-        
-        // Hide the label after 2 seconds
-        setTimeout(() => {
-            this.streakLabel.classList.remove('visible');
-        }, 2000);
-    }
-
-    handleMiss() {
+    handleFrequencyMiss() {
         if (this.streak > 0) {
-            this.showStreakLabel('Streak Lost! 💔');
-            // Remove firestorm effect when streak is lost
-            this.gameContainer.classList.remove('firestorm');
-        }
-        this.streak = 0;
-        this.currentStreakLevel = 'Normal';
-        this.updateScore();
-        this.updateStreakProgress();
+            const oldLevel = this.getCurrentStreakLevel();
+            if (oldLevel.threshold > 0) { 
+                // this.announceStreakChange(`Streak Lost! 💔`); // REMOVED ANNOUNCEMENT
+            }
+            this.streak = 0;
+            this.updateScore();
+        } 
     }
 
     updateScore() {
         this.scoreElement.textContent = this.score;
-        this.streakElement.textContent = this.streak;
     }
 
     handleResize() {
-        // Update maxBalls based on new screen size
-        const isMobile = window.innerWidth <= 768;
-        this.maxBalls = isMobile ? 3 : 4;
-        
-        // Adjust existing balls if needed
-        while (this.balls.length > this.maxBalls) {
-            const ball = this.balls[this.balls.length - 1];
-            ball.remove();
+       // No longer needed as maxBalls is fixed at 1
+    }
+
+    setupControlButtons() {
+        // Ensure elements exist before adding listeners
+        if (this.pauseButton) {
+            this.pauseButton.addEventListener('click', () => {
+                this.togglePause();
+            });
+        }
+        if (this.soundButton) {
+            this.soundButton.addEventListener('click', () => {
+                this.toggleSound();
+            });
+        }
+        if (this.resumeButton) {
+            this.resumeButton.addEventListener('click', () => {
+                this.togglePause(); // Resume is handled by togglePause
+            });
         }
     }
 
-    createStreakProgress() {
-        // Create container
-        this.streakProgress = document.createElement('div');
-        this.streakProgress.className = 'streak-progress';
-        
-        // Create streak counter
-        this.streakCounter = document.createElement('div');
-        this.streakCounter.className = 'streak-counter';
-        
-        // Create label
-        this.streakLabel = document.createElement('div');
-        this.streakLabel.className = 'streak-label';
-        this.streakLabel.textContent = 'Normal';
-        
-        // Create progress bar
-        this.progressBarContainer = document.createElement('div');
-        this.progressBarContainer.className = 'progress-bar';
-        
-        this.progressFill = document.createElement('div');
-        this.progressFill.className = 'progress-fill';
-        
-        // Assemble elements
-        this.progressBarContainer.appendChild(this.progressFill);
-        this.streakProgress.appendChild(this.streakCounter);
-        this.streakProgress.appendChild(this.streakLabel);
-        this.streakProgress.appendChild(this.progressBarContainer);
-        document.body.appendChild(this.streakProgress);
-        
-        // Initialize progress
-        this.updateStreakProgress();
+    // --- ADDED MISSING SOUND METHODS --- 
+    playHitSound() {
+        if (!this.soundEnabled) return;
+        // Assumes arctic_hit.m4a exists or will be added
+        const soundPath = this.currentEnvironment === 'jungle' ? 'assets/hit.m4a' : 'assets/arctic_hit.m4a'; 
+        const hitSound = new Audio(soundPath);
+        hitSound.volume = 0.3; 
+        hitSound.play().catch(e => console.log(`Error playing hit sound (${soundPath}):`, e));
     }
 
-    updateStreakProgress() {
-        let nextThreshold, progress;
-        
-        // Update streak counter
-        this.streakCounter.textContent = `${this.streak}`;
-        
-        // Calculate progress
-        if (this.streak < 5) {
-            nextThreshold = 5;
-            progress = (this.streak / nextThreshold) * 100;
-            this.gameContainer.classList.remove('firestorm');
-        } else if (this.streak < 10) {
-            nextThreshold = 10;
-            progress = (this.streak / nextThreshold) * 100;
-            this.gameContainer.classList.remove('firestorm');
-        } else if (this.streak < 20) {
-            nextThreshold = 20;
-            progress = (this.streak / nextThreshold) * 100;
-            this.gameContainer.classList.remove('firestorm');
-        } else {
-            progress = 100;
-            // Add firestorm effect when streak is 20 or higher
-            this.gameContainer.classList.add('firestorm');
-        }
-        
-        this.progressFill.style.width = `${progress}%`;
+    playMissSound() { // Currently only called manually if needed, not by frequency miss
+        if (!this.soundEnabled) return;
+        // Assumes arctic_miss.m4a exists or will be added
+        const soundPath = this.currentEnvironment === 'jungle' ? 'assets/miss.m4a' : 'assets/arctic_miss.m4a'; 
+        const missSound = new Audio(soundPath);
+        missSound.volume = 0.3;
+        missSound.play().catch(e => console.log(`Error playing miss sound (${soundPath}):`, e));
     }
+
+    playPopSound() {
+        if (!this.soundEnabled) return;
+        // Use pop.mp3 for jungle, require arctic_pop.m4a for arctic
+        const soundPath = this.currentEnvironment === 'jungle' ? 'assets/pop.mp3' : 'assets/arctic_pop.m4a'; 
+        const popSound = new Audio(soundPath);
+        popSound.volume = 0.5;
+        popSound.play().catch(e => console.log(`Error playing pop sound (${soundPath}):`, e));
+    }
+    // --- END ADDED METHODS --- 
 }
 
-// Start the game when the page loads
-window.addEventListener('load', () => {
+// Start the game when the DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
     new Game();
 }); 
